@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/rancher/remotedialer"
 )
 
 // Server defines parameters for running socks server.
@@ -45,6 +47,8 @@ type Server struct {
 	// Server transmit data between client and dest server.
 	// if nil, DefaultTransport is used.
 	Transporter
+
+	RemoteServer *remotedialer.Server
 
 	// ErrorLog specifics an options logger for errors accepting
 	// connections, unexpected socks protocol handshake process,
@@ -86,6 +90,13 @@ func (srv *Server) closeDoneChanLocked() {
 	default:
 		close(srv.doneCh)
 	}
+}
+
+func (srv *Server) getDialer(token string) func(network, address string) (net.Conn, error) {
+	if srv.RemoteServer == nil {
+		return net.Dial
+	}
+	return srv.RemoteServer.Dialer(token, 30*time.Second)
 }
 
 func (srv *Server) Close() error {
@@ -321,27 +332,27 @@ func (srv *Server) handShake(client net.Conn) (*Request, error) {
 	}
 
 	//socks5 protocol authentication
-	err = srv.authentication(client)
+	token, err := srv.authentication(client)
 	if err != nil {
 		return nil, err
 	}
 
 	//handle socks5 request
-	return srv.readSocks5Request(client)
+	return srv.readSocks5Request(client, token)
 }
 
 // authentication socks5 authentication process
-func (srv *Server) authentication(client net.Conn) error {
+func (srv *Server) authentication(client net.Conn) (string, error) {
 	//get nMethods
 	nMethods, err := ReadNBytes(client, 1)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	//Get methods
 	methods, err := ReadNBytes(client, int(nMethods[0]))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	return srv.MethodSelect(methods, client)
@@ -376,7 +387,7 @@ func (srv *Server) readSocks4Request(client net.Conn) (*Request, error) {
 }
 
 // readSocks5Request read socks5 protocol client request.
-func (srv *Server) readSocks5Request(client net.Conn) (*Request, error) {
+func (srv *Server) readSocks5Request(client net.Conn, token string) (*Request, error) {
 	reply := &Reply{
 		VER:     Version5,
 		Address: &Address{net.IPv4zero, IPV4_ADDRESS, 0},
@@ -400,6 +411,7 @@ func (srv *Server) readSocks5Request(client net.Conn) (*Request, error) {
 		}
 	}
 	req.Address = addr
+	req.Token = token
 
 	return req, nil
 }
@@ -433,7 +445,7 @@ func (srv *Server) establish(client net.Conn, req *Request) (dest net.Conn, err 
 		switch req.CMD {
 		case CONNECT:
 			// dial to dest host.
-			dest, err = net.Dial("tcp", req.Address.String())
+			dest, err = srv.getDialer(req.Token)("tcp", req.Address.String())
 			if err != nil {
 				reply.REP = Rejected
 				err2 := srv.sendReply(client, reply)
@@ -525,7 +537,7 @@ func (srv *Server) establish(client net.Conn, req *Request) (dest net.Conn, err 
 		switch req.CMD {
 		case CONNECT:
 			// dial dest host.
-			dest, err = net.Dial("tcp", req.Address.String())
+			dest, err = srv.getDialer(req.Token)("tcp", req.Address.String())
 			if err != nil {
 				reply.REP = HOST_UNREACHABLE
 				err2 := srv.sendReply(client, reply)
@@ -686,7 +698,7 @@ func (srv *Server) sendReply(out io.Writer, r *Reply) error {
 }
 
 // MethodSelect select authentication method and reply to client.
-func (srv *Server) MethodSelect(methods []CMD, client net.Conn) error {
+func (srv *Server) MethodSelect(methods []CMD, client net.Conn) (string, error) {
 	// Select method to authenticate, then send selected method to client.
 	for _, method := range methods {
 		//Preferred to use NO_AUTHENTICATION_REQUIRED method
@@ -694,9 +706,9 @@ func (srv *Server) MethodSelect(methods []CMD, client net.Conn) error {
 			reply := []byte{Version5, NO_AUTHENTICATION_REQUIRED}
 			_, err := client.Write(reply)
 			if err != nil {
-				return &OpError{Version5, "write", client.RemoteAddr(), "authentication", err}
+				return "", &OpError{Version5, "write", client.RemoteAddr(), "authentication", err}
 			}
-			return nil
+			return "", nil
 		}
 		for m := range srv.Authenticators {
 			//Select the first matched method to authenticate
@@ -704,14 +716,14 @@ func (srv *Server) MethodSelect(methods []CMD, client net.Conn) error {
 				reply := []byte{Version5, method}
 				_, err := client.Write(reply)
 				if err != nil {
-					return &OpError{Version5, "write", client.RemoteAddr(), "authentication", err}
+					return "", &OpError{Version5, "write", client.RemoteAddr(), "authentication", err}
 				}
 
-				err = srv.Authenticators[m].Authenticate(client, client)
+				token, err := srv.Authenticators[m].Authenticate(client, client)
 				if err != nil {
-					return &OpError{Version5, "", client.RemoteAddr(), "authentication", err}
+					return "", &OpError{Version5, "", client.RemoteAddr(), "authentication", err}
 				}
-				return nil
+				return token, nil
 			}
 		}
 	}
@@ -720,9 +732,9 @@ func (srv *Server) MethodSelect(methods []CMD, client net.Conn) error {
 	reply := []byte{Version5, NO_ACCEPTABLE_METHODS}
 	_, err := client.Write(reply)
 	if err != nil {
-		return &OpError{Version5, "write", client.RemoteAddr(), "authentication", err}
+		return "", &OpError{Version5, "write", client.RemoteAddr(), "authentication", err}
 	}
-	return &OpError{Version5, "", client.RemoteAddr(), "authentication", &MethodError{methods[0]}}
+	return "", &OpError{Version5, "", client.RemoteAddr(), "authentication", &MethodError{methods[0]}}
 }
 
 func (srv *Server) logf() func(format string, args ...interface{}) {

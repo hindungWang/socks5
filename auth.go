@@ -10,7 +10,7 @@ import (
 
 // Authenticator provides socks5's authentication sub negotiation.
 type Authenticator interface {
-	Authenticate(in io.Reader, out io.Writer) error
+	Authenticate(in io.Reader, out io.Writer) (string, error)
 }
 
 // NoAuth NO_AUTHENTICATION_REQUIRED implementation.
@@ -18,8 +18,8 @@ type NoAuth struct {
 }
 
 // Authenticate NO_AUTHENTICATION_REQUIRED Authentication for socks5 Server and Client.
-func (n NoAuth) Authenticate(in io.Reader, out io.Writer) error {
-	return nil
+func (n NoAuth) Authenticate(in io.Reader, out io.Writer) (string, error) {
+	return "", nil
 }
 
 // UserPwdAuth provides socks5 Server Username/Password Authenticator.
@@ -28,10 +28,10 @@ type UserPwdAuth struct {
 }
 
 // Authenticate provide socks5 Server Username/Password authentication.
-func (u UserPwdAuth) Authenticate(in io.Reader, out io.Writer) error {
+func (u UserPwdAuth) Authenticate(in io.Reader, out io.Writer) (string, error) {
 	uname, passwd, err := u.ReadUserPwd(in)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	err = u.Validate(string(uname), string(passwd))
@@ -39,19 +39,19 @@ func (u UserPwdAuth) Authenticate(in io.Reader, out io.Writer) error {
 		reply := []byte{1, 1}
 		_, err1 := out.Write(reply)
 		if err1 != nil {
-			return err
+			return "", err
 		}
-		return err
+		return "", err
 	}
 
 	//authentication successful,then send reply to client
 	reply := []byte{1, 0}
 	_, err = out.Write(reply)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return string(uname), nil
 }
 
 // ReadUserPwd read Username/Password request from client

@@ -42,7 +42,7 @@ type UserPasswd struct {
 }
 
 // Authenticate socks5 Client Username/Password Authentication.
-func (c *UserPasswd) Authenticate(in io.Reader, out io.Writer) error {
+func (c *UserPasswd) Authenticate(in io.Reader, out io.Writer) (string, error) {
 	//This begins with the client producing a Username/Password request:
 	//    +----+------+----------+------+----------+
 	//    |VER | ULEN |  UNAME   | PLEN |  PASSWD  |
@@ -51,7 +51,7 @@ func (c *UserPasswd) Authenticate(in io.Reader, out io.Writer) error {
 	//    +----+------+----------+------+----------+
 	_, err := out.Write(append(append(append([]byte{0x01, byte(len(c.Username))}, []byte(c.Username)...), byte(len(c.Password))), []byte(c.Password)...))
 	if err != nil {
-		return err
+		return "", err
 	}
 	//Get reply, the following response:
 
@@ -62,15 +62,15 @@ func (c *UserPasswd) Authenticate(in io.Reader, out io.Writer) error {
 	//    +----+--------+
 	tmp, err := ReadNBytes(in, 2)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if tmp[0] != 0x01 {
-		return errors.New("not support method")
+		return "", errors.New("not support method")
 	}
 	if tmp[1] != SUCCESSED {
-		return errors.New("user authentication failed")
+		return "", errors.New("user authentication failed")
 	}
-	return nil
+	return c.Username, nil
 }
 
 // handshake socks TCP connect,get a tcp connect and reply addr
@@ -195,7 +195,7 @@ func (clt *Client) authentication(proxyConn net.Conn) error {
 	}
 
 	// process authentication sub negotiation
-	err = clt.Auth[reply[1]].Authenticate(proxyConn, proxyConn)
+	_, err = clt.Auth[reply[1]].Authenticate(proxyConn, proxyConn)
 	if err != nil {
 		return err
 	}

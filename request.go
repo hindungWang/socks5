@@ -16,6 +16,7 @@ type Request struct {
 	CMD
 	RSV uint8
 	*Address
+	Token string
 }
 
 // UDPHeader Each UDP datagram carries a UDP request
