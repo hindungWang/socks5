@@ -9,7 +9,7 @@ import (
 
 // Transporter transmit data between client and dest server.
 type Transporter interface {
-	TransportTCP(client *net.TCPConn, remote *net.TCPConn) <-chan error
+	TransportTCP(client net.Conn, remote net.Conn) <-chan error
 	TransportUDP(server *UDPConn, request *Request) error
 }
 
@@ -25,11 +25,11 @@ var transportPool = &sync.Pool{
 }
 
 // TransportTCP use io.CopyBuffer transmit data.
-func (t *transport) TransportTCP(client *net.TCPConn, remote *net.TCPConn) <-chan error {
+func (t *transport) TransportTCP(client net.Conn, remote net.Conn) <-chan error {
 	errCh := make(chan error)
 	var wg = sync.WaitGroup{}
 
-	f := func(dst *net.TCPConn, src *net.TCPConn) {
+	f := func(dst net.Conn, src net.Conn) {
 		defer wg.Done()
 		buf := transportPool.Get().([]byte)
 		defer transportPool.Put(buf)
