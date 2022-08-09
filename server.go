@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/rancher/remotedialer"
 )
+
+type Dialer func(network, address string) (net.Conn, error)
 
 // Server defines parameters for running socks server.
 // The zero value for Server is a valid configuration(tcp listen on :1080).
@@ -92,11 +95,12 @@ func (srv *Server) closeDoneChanLocked() {
 	}
 }
 
-func (srv *Server) getDialer(token string) func(network, address string) (net.Conn, error) {
+func (srv *Server) getConn(token string, addr string) (net.Conn, error) {
 	if srv.RemoteServer == nil {
-		return net.Dial
+		return net.Dial("tcp", addr)
 	}
-	return srv.RemoteServer.Dialer(token, 30*time.Second)
+	d := srv.RemoteServer.Dialer(token)
+	return d(context.TODO(), "tcp", addr)
 }
 
 func (srv *Server) Close() error {
@@ -445,7 +449,7 @@ func (srv *Server) establish(client net.Conn, req *Request) (dest net.Conn, err 
 		switch req.CMD {
 		case CONNECT:
 			// dial to dest host.
-			dest, err = srv.getDialer(req.Token)("tcp", req.Address.String())
+			dest, err = srv.getConn(req.Token, req.Address.String())
 			if err != nil {
 				reply.REP = Rejected
 				err2 := srv.sendReply(client, reply)
@@ -537,7 +541,7 @@ func (srv *Server) establish(client net.Conn, req *Request) (dest net.Conn, err 
 		switch req.CMD {
 		case CONNECT:
 			// dial dest host.
-			dest, err = srv.getDialer(req.Token)("tcp", req.Address.String())
+			dest, err = srv.getConn(req.Token, req.Address.String())
 			if err != nil {
 				reply.REP = HOST_UNREACHABLE
 				err2 := srv.sendReply(client, reply)
