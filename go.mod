@@ -1,4 +1,4 @@
-module github.com/hindung/socks5
+module github.com/hindungWang/socks5
 
 go 1.16
 
